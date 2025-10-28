@@ -18,7 +18,7 @@ if ! command -v pyinstaller &> /dev/null; then
 fi
 
 # Сборка с PyInstaller с иконкой и правильным именем
-pyinstaller --noconfirm --onefile --windowed --icon="$REPO_DIR/$ICON_NAME" --name "$APP_NAME" "$REPO_DIR/$PY_FILE"
+"$HOME/.local/bin/pyinstaller" --noconfirm --onefile --windowed --icon="$REPO_DIR/$ICON_NAME" --name "$APP_NAME" "$REPO_DIR/$PY_FILE"
 
 # Проверяем, что бинарник реально создан
 if [ ! -f "$BUILD_DIR/$APP_NAME" ]; then
