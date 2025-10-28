@@ -3,7 +3,7 @@
 export PATH="$HOME/.local/bin:$PATH"
 
 REPO_DIR="$HOME/EXODUS-Terminal/EXODUS"  # путь к папке с exodus.py
-APP_NAME="Exodus"
+APP_NAME="exodus"
 PY_FILE="$REPO_DIR/exodus.py"
 ICON_NAME="$REPO_DIR/icon.png"
 BUILD_DIR="$REPO_DIR/dist"
