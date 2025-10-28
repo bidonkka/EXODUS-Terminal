@@ -10,11 +10,19 @@ import re
 import json
 import pyte
 from datetime import datetime
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QTextEdit, QLineEdit, 
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QPlainTextEdit, QLineEdit, 
                              QVBoxLayout, QWidget, QAction, QFileDialog, QMessageBox,
                              QDialog, QTextBrowser, QPushButton, QHBoxLayout, QLabel)
 from PyQt5.QtGui import QFont, QTextCursor, QKeySequence
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
+
+# Проверка зависимостей
+try:
+    import pyte
+    PYTE_AVAILABLE = True
+except ImportError:
+    PYTE_AVAILABLE = False
+    print("⚠️  Warning: pyte not installed. Install with: pip install pyte")
 
 class PTYThread(QThread):
     """Поток для чтения из псевдотерминала"""
@@ -49,6 +57,7 @@ class CommandHistoryDialog(QDialog):
         self.setWindowTitle("Command History")
         self.setGeometry(200, 200, 600, 400)
         self.selected_command = None
+        self.parent_terminal = parent
         
         layout = QVBoxLayout()
         
@@ -110,11 +119,16 @@ class CommandHistoryDialog(QDialog):
         reply = QMessageBox.question(
             self,
             "Clear History",
-            "Are you sure you want to clear command history?",
+            "Are you sure you want to clear command history?\n"
+            "This will also delete ~/.exodus_history file.",
             QMessageBox.Yes | QMessageBox.No
         )
         if reply == QMessageBox.Yes:
             self.history_browser.clear()
+            # ИСПРАВЛЕНО: Очищаем фактическую историю и файл
+            if self.parent_terminal:
+                self.parent_terminal.command_history.clear()
+                self.parent_terminal.save_history()
             self.accept()
 
 class HackerTerminal(QMainWindow):
@@ -161,8 +175,10 @@ class HackerTerminal(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         
-        self.terminal_output = QTextEdit()
+        # ИСПРАВЛЕНО: Используем QPlainTextEdit для лучшей производительности
+        self.terminal_output = QPlainTextEdit()
         self.terminal_output.setReadOnly(True)
+        self.terminal_output.setMaximumBlockCount(5000)  # Автоматическое ограничение буфера
         layout.addWidget(self.terminal_output)
         
         # Устанавливаем event filter на terminal_output для raw режима
@@ -183,6 +199,7 @@ class HackerTerminal(QMainWindow):
     
     def show_welcome_banner(self):
         """Показать приветственный баннер"""
+        pyte_status = "✓" if PYTE_AVAILABLE else "✗ (install: pip install pyte)"
         banner = [
             "=" * 91,
             "███████╗██╗  ██╗ ██████╗ ██████╗ ██╗   ██╗███████╗",
@@ -191,7 +208,7 @@ class HackerTerminal(QMainWindow):
             "██╔══╝   ██╔██╗ ██║   ██║██║  ██║██║   ██║╚════██║",
             "███████╗██╔╝ ██╗╚██████╔╝██████╔╝╚██████╔╝███████║",
             "╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚═════╝  ╚═════╝ ╚══════╝",
-            "                 Terminal Emulator v1.5             ",
+            "                 Terminal Emulator v1.6             ",
             "=" * 91,
             "",
             "🔥 Features:",
@@ -201,7 +218,7 @@ class HackerTerminal(QMainWindow):
             "  • Auto-completion (Tab)",
             "  • Session Statistics",
             "  • Window Transparency",
-            "  • Raw Mode for vim/nano/htop",
+            f"  • Raw Mode for vim/nano/htop: {pyte_status}",
             "",
             "📌 Shortcuts:",
             "  Ctrl+C: Interrupt | Ctrl+D: EOF | Ctrl+L: Clear",
@@ -210,7 +227,7 @@ class HackerTerminal(QMainWindow):
             "",
         ]
         for line in banner:
-            self.terminal_output.append(line)
+            self.terminal_output.appendPlainText(line)
     
     def create_menu(self):
         menubar = self.menuBar()
@@ -237,7 +254,7 @@ class HackerTerminal(QMainWindow):
         file_menu.addSeparator()
         
         exit_action = QAction('Exit', self)
-        exit_action.setShortcut(QKeySequence('Ctrl+Q'))
+        exit_action.setShortcut(QKeySequence('Alt+F4'))
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
         
@@ -381,7 +398,7 @@ class HackerTerminal(QMainWindow):
         c = schemes.get(self.color_scheme, schemes['green'])
         style = f"""
             QMainWindow {{ background-color: {c['bg']}; }}
-            QTextEdit {{
+            QPlainTextEdit {{
                 background-color: {c['bg']};
                 color: {c['fg']};
                 border: none;
@@ -515,11 +532,11 @@ class HackerTerminal(QMainWindow):
                     QMessageBox.No
                 )
                 if reply == QMessageBox.No:
-                    self.terminal_output.append("\n[EXODUS] Command cancelled by user.\n")
+                    self.terminal_output.appendPlainText("\n[EXODUS] Command cancelled by user.\n")
                     return
             
             # Входим в raw режим ПЕРЕД отправкой команды если это raw app
-            if is_raw_app:
+            if is_raw_app and PYTE_AVAILABLE:
                 # Небольшая задержка чтобы интерфейс успел перестроиться
                 QApplication.processEvents()
                 self.enter_raw_mode()
@@ -528,7 +545,7 @@ class HackerTerminal(QMainWindow):
             os.write(self.master_fd, (text + '\n').encode('utf-8'))
             
         except Exception as e:
-            self.terminal_output.append(f"\nERROR: {str(e)}\n")
+            self.terminal_output.appendPlainText(f"\nERROR: {str(e)}\n")
 
     def on_text_changed(self, text):
         """Подсказки при вводе команд"""
@@ -536,12 +553,16 @@ class HackerTerminal(QMainWindow):
     
     def enter_raw_mode(self):
         """Входим в raw режим для vim/nano"""
+        if not PYTE_AVAILABLE:
+            self.terminal_output.appendPlainText("\n[RAW mode unavailable: pyte not installed]\n")
+            return
+            
         self.raw_mode = True
         self.command_input.hide()  # Прячем поле ввода
         self.terminal_output.setFocus()  # Фокус на терминал
         
         # Настройки для raw режима
-        self.terminal_output.setLineWrapMode(QTextEdit.NoWrap)  # Отключаем перенос строк
+        self.terminal_output.setLineWrapMode(QPlainTextEdit.NoWrap)  # Отключаем перенос строк
         
         # Инициализируем pyte экран
         try:
@@ -549,13 +570,14 @@ class HackerTerminal(QMainWindow):
             cols = max(80, self.terminal_output.viewport().width() // fm.averageCharWidth())
             rows = max(24, self.terminal_output.viewport().height() // fm.height())
             
+            # ИСПРАВЛЕНО: правильный порядок аргументов (columns, lines)
             self.screen = pyte.Screen(cols, rows)
             self.stream = pyte.Stream(self.screen)
             
             # Очищаем терминал для чистого старта
             self.terminal_output.clear()
         except Exception as e:
-            self.terminal_output.append(f"\n[Error initializing RAW mode: {e}]\n")
+            self.terminal_output.appendPlainText(f"\n[Error initializing RAW mode: {e}]\n")
     
     def exit_raw_mode(self):
         """Выходим из raw режима"""
@@ -565,7 +587,7 @@ class HackerTerminal(QMainWindow):
             self.stream = None
             
             # Возвращаем обычные настройки
-            self.terminal_output.setLineWrapMode(QTextEdit.WidgetWidth)
+            self.terminal_output.setLineWrapMode(QPlainTextEdit.WidgetWidth)
             
             self.command_input.show()  # Показываем поле ввода
             self.command_input.setFocus()
@@ -573,8 +595,9 @@ class HackerTerminal(QMainWindow):
     def eventFilter(self, obj, event):
         # RAW РЕЖИМ - перехватываем весь ввод с клавиатуры
         if self.raw_mode and obj == self.terminal_output and event.type() == event.KeyPress:
+            # ИСПРАВЛЕНО: Побитовое сравнение модификаторов
             # Ctrl+Q - выход из raw режима вручную
-            if event.key() == Qt.Key_Q and event.modifiers() == Qt.ControlModifier:
+            if event.key() == Qt.Key_Q and (event.modifiers() & Qt.ControlModifier):
                 self.exit_raw_mode()
                 return True
             
@@ -638,24 +661,25 @@ class HackerTerminal(QMainWindow):
                         self.command_input.setText(self.temp_command)
                 return True
             
+            # ИСПРАВЛЕНО: Побитовое сравнение модификаторов
             # Ctrl+C - SIGINT
-            if event.key() == Qt.Key_C and event.modifiers() == Qt.ControlModifier:
+            if event.key() == Qt.Key_C and (event.modifiers() & Qt.ControlModifier):
                 self.send_signal(b'\x03')
                 return True
             
             # Ctrl+D - EOF
-            if event.key() == Qt.Key_D and event.modifiers() == Qt.ControlModifier:
+            if event.key() == Qt.Key_D and (event.modifiers() & Qt.ControlModifier):
                 if not self.command_input.text():
                     self.send_signal(b'\x04')
                 return True
             
             # Ctrl+Z - SIGTSTP
-            if event.key() == Qt.Key_Z and event.modifiers() == Qt.ControlModifier:
+            if event.key() == Qt.Key_Z and (event.modifiers() & Qt.ControlModifier):
                 self.send_signal(b'\x1a')
                 return True
             
             # Ctrl+L - очистка
-            if event.key() == Qt.Key_L and event.modifiers() == Qt.ControlModifier:
+            if event.key() == Qt.Key_L and (event.modifiers() & Qt.ControlModifier):
                 self.send_signal(b'\x0c')
                 return True
             
@@ -677,8 +701,11 @@ class HackerTerminal(QMainWindow):
             env['TERM'] = 'xterm-256color'
             env['COLORTERM'] = 'truecolor'
             
+            # ИСПРАВЛЕНО: Используем оболочку из окружения пользователя
+            shell = os.environ.get('SHELL', '/bin/bash')
+            
             self.shell_process = subprocess.Popen(
-                ['/bin/bash', '-i'],
+                [shell, '-i'],
                 stdin=self.slave_fd,
                 stdout=self.slave_fd,
                 stderr=self.slave_fd,
@@ -691,7 +718,7 @@ class HackerTerminal(QMainWindow):
             self.pty_thread.output_received.connect(self.handle_output)
             self.pty_thread.start()
         except Exception as e:
-            self.terminal_output.append(f"ERROR starting shell: {str(e)}")
+            self.terminal_output.appendPlainText(f"ERROR starting shell: {str(e)}")
 
     def update_terminal_size(self):
         if self.master_fd is None:
@@ -703,9 +730,9 @@ class HackerTerminal(QMainWindow):
             size = struct.pack('HHHH', rows, cols, 0, 0)
             fcntl.ioctl(self.master_fd, termios.TIOCSWINSZ, size)
             
-            # Обновляем размер pyte экрана если в raw режиме
+            # ИСПРАВЛЕНО: правильный порядок аргументов (cols, rows)
             if self.raw_mode and self.screen:
-                self.screen.resize(rows, cols)
+                self.screen.resize(cols, rows)
                 self.render_screen()
         except Exception:
             pass
@@ -719,7 +746,7 @@ class HackerTerminal(QMainWindow):
             text = data.decode('utf-8', errors='replace')
             
             # RAW режим с pyte - рендерим экран терминала
-            if self.raw_mode and self.stream:
+            if self.raw_mode and self.stream and PYTE_AVAILABLE:
                 try:
                     # Пропускаем данные через pyte
                     self.stream.feed(text)
@@ -733,10 +760,10 @@ class HackerTerminal(QMainWindow):
             
             # ОБЫЧНЫЙ режим - фильтруем escape-последовательности
             if not self.raw_mode:
-                # Удаляем ANSI escape последовательности
-                text = re.sub(r'\x1b\[[0-9;?]*[A-Za-z]', '', text)
-                text = re.sub(r'\x1b\][0-9;]*[^\x07\x1b]*[\x07\x1b]', '', text)
-                text = re.sub(r'\x1b[^\x1b]*[\x07\x1b\\]', '', text)
+                # УЛУЧШЕНО: Более полная фильтрация ANSI
+                text = re.sub(r'\x1b\[[0-9;?]*[mKHJA-Z]', '', text)
+                text = re.sub(r'\x1b\][0-9;]*[^\x07\x1b]*(?:\x07|\x1b\\)', '', text)
+                text = re.sub(r'\x1b[=>]', '', text)
             
             scrollbar = self.terminal_output.verticalScrollBar()
             at_bottom = scrollbar.value() == scrollbar.maximum()
@@ -747,18 +774,13 @@ class HackerTerminal(QMainWindow):
             if at_bottom:
                 scrollbar.setValue(scrollbar.maximum())
             
-            # Ограничение буфера
-            doc = self.terminal_output.document()
-            if doc.blockCount() > 2000:
-                cursor = QTextCursor(doc)
-                cursor.movePosition(QTextCursor.Start)
-                cursor.movePosition(QTextCursor.NextBlock, QTextCursor.KeepAnchor, 500)
-                cursor.removeSelectedText()
+            # ИСПРАВЛЕНО: Буфер ограничивается автоматически через setMaximumBlockCount
+            
         except Exception:
             pass
     
     def render_screen(self):
-        """Отрисовка pyte экрана в QTextEdit"""
+        """Отрисовка pyte экрана в QPlainTextEdit"""
         if not self.screen:
             return
         
@@ -796,15 +818,30 @@ class HackerTerminal(QMainWindow):
         self.terminal_output.copy()
     
     def paste_text(self):
-        self.command_input.insert(QApplication.clipboard().text())
+        # ИСПРАВЛЕНО: Вставка в зависимости от фокуса
+        clipboard_text = QApplication.clipboard().text()
+        if clipboard_text:
+            if self.terminal_output.hasFocus():
+                self.send_input(clipboard_text.encode('utf-8'))
+            else:
+                self.command_input.insert(clipboard_text)
     
     def clear_terminal(self):
         self.send_input(b'\x0c')
 
     def new_window(self):
         """Открыть новое окно терминала"""
-        new_terminal = HackerTerminal()
-        new_terminal.show()
+        # ИСПРАВЛЕНО: Предупреждение о создании нового процесса
+        reply = QMessageBox.question(
+            self,
+            "New Terminal Window",
+            "This will create a new independent terminal process.\nContinue?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes
+        )
+        if reply == QMessageBox.Yes:
+            new_terminal = HackerTerminal()
+            new_terminal.show()
 
     def show_history_dialog(self):
         """Показать историю команд"""
@@ -817,6 +854,9 @@ class HackerTerminal(QMainWindow):
         hours, remainder = divmod(uptime.total_seconds(), 3600)
         minutes, seconds = divmod(remainder, 60)
         
+        shell = os.environ.get('SHELL', 'unknown')
+        pyte_status = "Available" if PYTE_AVAILABLE else "Not installed"
+        
         stats = f"""
 <h2>Session Statistics</h2>
 <table style='color: #00FF00; font-family: Courier New;'>
@@ -824,6 +864,8 @@ class HackerTerminal(QMainWindow):
 <tr><td><b>Uptime:</b></td><td>{int(hours)}h {int(minutes)}m {int(seconds)}s</td></tr>
 <tr><td><b>Commands Executed:</b></td><td>{self.command_count}</td></tr>
 <tr><td><b>History Size:</b></td><td>{len(self.command_history)} commands</td></tr>
+<tr><td><b>Shell:</b></td><td>{shell}</td></tr>
+<tr><td><b>Pyte Support:</b></td><td>{pyte_status}</td></tr>
 <tr><td><b>Current Directory:</b></td><td>{os.getcwd()}</td></tr>
 <tr><td><b>Terminal Size:</b></td><td>{self.terminal_output.viewport().width()}x{self.terminal_output.viewport().height()}px</td></tr>
 </table>
@@ -858,7 +900,7 @@ class HackerTerminal(QMainWindow):
 <tr><td><b>Ctrl+0</b></td><td>Reset zoom</td></tr>
 <tr><td><b>F1</b></td><td>Show this help</td></tr>
 </table>
-<p style='color: #00FF00;'><b>Note:</b> When using vim/nano/htop, the terminal automatically enters RAW mode.</p>
+<p style='color: #00FF00;'><b>Note:</b> Raw mode activates automatically for vim, nano, htop, etc.</p>
 """
         msg = QMessageBox(self)
         msg.setWindowTitle("Keyboard Shortcuts")
@@ -885,7 +927,8 @@ class HackerTerminal(QMainWindow):
                     log_data = {
                         'session_start': self.start_time.isoformat(),
                         'commands': self.session_commands,
-                        'total_commands': self.command_count
+                        'total_commands': self.command_count,
+                        'shell': os.environ.get('SHELL', 'unknown')
                     }
                     with open(fn, 'w', encoding='utf-8') as f:
                         json.dump(log_data, f, indent=2)
@@ -972,14 +1015,18 @@ class HackerTerminal(QMainWindow):
         self.update_terminal_size()
 
     def show_about(self):
-        about_text = """
-<h2 style='color: #00FF00;'>EXODUS Terminal v1.0</h2>
+        pyte_status = "✓" if PYTE_AVAILABLE else "✗ (not installed)"
+        shell = os.environ.get('SHELL', 'unknown')
+        
+        about_text = f"""
+<h2 style='color: #00FF00;'>EXODUS Terminal v1.6</h2>
 <p style='color: #00FF00; font-family: Courier New;'>
 Advanced terminal emulator with PTY support and enhanced features.
 </p>
 <p style='color: #00FF00;'><b>Features:</b></p>
 <ul style='color: #00FF00;'>
 <li>Full PTY terminal emulation</li>
+<li>Pyte support for vim/nano/htop: {pyte_status}</li>
 <li>Command history with persistence</li>
 <li>Destructive command protection</li>
 <li>Session statistics and logging</li>
@@ -989,6 +1036,7 @@ Advanced terminal emulator with PTY support and enhanced features.
 <li>Signal handling (Ctrl+C, Ctrl+Z, etc.)</li>
 </ul>
 <p style='color: #00FF00;'>
+<b>Shell:</b> {shell}<br>
 <b>Created with PyQt5</b><br>
 Press F1 for keyboard shortcuts
 </p>
@@ -1039,21 +1087,42 @@ Press F1 for keyboard shortcuts
             except:
                 pass
         
-        # Завершаем процесс shell
+        # ИСПРАВЛЕНО: Увеличен timeout и правильная обработка
         if self.shell_process:
             try:
                 self.shell_process.terminate()
-                self.shell_process.wait(timeout=1)
-            except:
+                self.shell_process.wait(timeout=3)  # Даём 3 секунды
+            except subprocess.TimeoutExpired:
                 try:
                     self.shell_process.kill()
+                    self.shell_process.wait(timeout=1)
                 except:
                     pass
+            except:
+                pass
         
         event.accept()
 
-if __name__ == '__main__':
+def main():
+    """Главная функция с проверкой зависимостей"""
+    # ИСПРАВЛЕНО: Проверяем зависимости перед запуском
+    try:
+        import PyQt5
+    except ImportError:
+        print("❌ Error: PyQt5 is not installed!")
+        print("Install with: pip install PyQt5")
+        sys.exit(1)
+    
+    if not PYTE_AVAILABLE:
+        print("⚠️  Warning: pyte is not installed.")
+        print("Raw mode (vim/nano/htop) will be limited.")
+        print("Install with: pip install pyte")
+        print()
+    
     app = QApplication(sys.argv)
     terminal = HackerTerminal()
     terminal.show()
     sys.exit(app.exec_())
+
+if __name__ == '__main__':
+    main()
