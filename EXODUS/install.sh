@@ -23,7 +23,7 @@ print_error() { echo -e "${RED}[✗]${NC} $1"; }
 APP_NAME="exodus"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PY_FILE="$SCRIPT_DIR/exodus.py"
-ICON_FILE="$SCRIPT_DIR/exodus.png"
+ICON_FILE="$SCRIPT_DIR/exodus.svg"
 
 BIN_DIR="$HOME/.local/bin"
 DESKTOP_DIR="$HOME/.local/share/applications"
@@ -131,10 +131,10 @@ if [ -n "$ICON_FILE" ]; then
     print_info "Installing icon..."
     
     mkdir -p "$ICON_DIR"
-    cp "$ICON_FILE" "$ICON_DIR/$APP_NAME.png"
+    cp "$ICON_FILE" "$ICON_DIR/$APP_NAME.svg"
     
     # ТОЛЬКО в pixmaps, без обновления кэшей
-    ICON_PATH="$ICON_DIR/$APP_NAME.png"
+    ICON_PATH="$ICON_DIR/$APP_NAME.svg"
     
     print_success "Icon installed to: $ICON_PATH"
 else
