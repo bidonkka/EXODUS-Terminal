@@ -8,13 +8,14 @@ import fcntl
 import termios
 import re
 import json
-import resources_rc
+import pyte
 from datetime import datetime
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QTextEdit, QLineEdit, 
                              QVBoxLayout, QWidget, QAction, QFileDialog, QMessageBox,
                              QDialog, QTextBrowser, QPushButton, QHBoxLayout, QLabel)
-from PyQt5.QtGui import QFont, QTextCursor, QKeySequence, QIcon
+from PyQt5.QtGui import QFont, QTextCursor, QKeySequence
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
+
 class PTYThread(QThread):
     """Поток для чтения из псевдотерминала"""
     output_received = pyqtSignal(bytes)
@@ -130,9 +131,17 @@ class HackerTerminal(QMainWindow):
         self.session_commands = []  # Команды текущей сессии
         self.start_time = datetime.now()
         self.command_count = 0
+        self.opacity = 0.95  # Прозрачность по умолчанию
+        self.transparency_enabled = False
+        self.raw_mode = False  # Режим для vim/nano
+        
+        # Pyte эмулятор терминала
+        self.screen = None
+        self.stream = None
         
         # Загружаем историю из файла
         self.load_history()
+        self.load_settings()
         
         self.initUI()
         self.start_shell()
@@ -145,7 +154,7 @@ class HackerTerminal(QMainWindow):
     def initUI(self):
         self.setWindowTitle('EXODUS')
         self.setGeometry(100, 100, 900, 650)
-        self.setWindowIcon(QIcon(":/icon.png"))  # иконка из встроенного ресурса
+        
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout(central_widget)
@@ -156,6 +165,9 @@ class HackerTerminal(QMainWindow):
         self.terminal_output.setReadOnly(True)
         layout.addWidget(self.terminal_output)
         
+        # Устанавливаем event filter на terminal_output для raw режима
+        self.terminal_output.installEventFilter(self)
+        
         self.command_input = QLineEdit()
         self.command_input.returnPressed.connect(self.send_command)
         self.command_input.installEventFilter(self)
@@ -164,6 +176,7 @@ class HackerTerminal(QMainWindow):
         
         self.create_menu()
         self.apply_color_scheme()
+        self.apply_opacity()
         
         self.show_welcome_banner()
         self.command_input.setFocus()
@@ -178,7 +191,7 @@ class HackerTerminal(QMainWindow):
             "██╔══╝   ██╔██╗ ██║   ██║██║  ██║██║   ██║╚════██║",
             "███████╗██╔╝ ██╗╚██████╔╝██████╔╝╚██████╔╝███████║",
             "╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚═════╝  ╚═════╝ ╚══════╝",
-            "                                                  ",
+            "                 Terminal Emulator v1.0             ",
             "=" * 91,
             "",
             "🔥 Features:",
@@ -187,10 +200,13 @@ class HackerTerminal(QMainWindow):
             "  • Destructive Command Protection",
             "  • Auto-completion (Tab)",
             "  • Session Statistics",
+            "  • Window Transparency",
+            "  • Raw Mode for vim/nano/htop",
             "",
             "📌 Shortcuts:",
             "  Ctrl+C: Interrupt | Ctrl+D: EOF | Ctrl+L: Clear",
             "  Ctrl+H: History | Ctrl+Shift+C/V: Copy/Paste",
+            "  Ctrl+T: Toggle Transparency | Ctrl+Q: Exit Raw Mode",
             "",
         ]
         for line in banner:
@@ -278,6 +294,49 @@ class HackerTerminal(QMainWindow):
         
         view_menu.addSeparator()
         
+        # Transparency submenu
+        transparency_menu = view_menu.addMenu('Transparency')
+        
+        toggle_transparency = QAction('Enable Transparency', self)
+        toggle_transparency.setShortcut(QKeySequence('Ctrl+T'))
+        toggle_transparency.setCheckable(True)
+        toggle_transparency.setChecked(self.transparency_enabled)
+        toggle_transparency.triggered.connect(self.toggle_transparency)
+        transparency_menu.addAction(toggle_transparency)
+        self.transparency_action = toggle_transparency
+        
+        transparency_menu.addSeparator()
+        
+        opacity_10 = QAction('10% Opacity', self)
+        opacity_10.triggered.connect(lambda: self.set_opacity(0.1))
+        transparency_menu.addAction(opacity_10)
+        
+        opacity_25 = QAction('25% Opacity', self)
+        opacity_25.triggered.connect(lambda: self.set_opacity(0.25))
+        transparency_menu.addAction(opacity_25)
+        
+        opacity_50 = QAction('50% Opacity', self)
+        opacity_50.triggered.connect(lambda: self.set_opacity(0.5))
+        transparency_menu.addAction(opacity_50)
+        
+        opacity_75 = QAction('75% Opacity', self)
+        opacity_75.triggered.connect(lambda: self.set_opacity(0.75))
+        transparency_menu.addAction(opacity_75)
+        
+        opacity_90 = QAction('90% Opacity', self)
+        opacity_90.triggered.connect(lambda: self.set_opacity(0.9))
+        transparency_menu.addAction(opacity_90)
+        
+        opacity_95 = QAction('95% Opacity', self)
+        opacity_95.triggered.connect(lambda: self.set_opacity(0.95))
+        transparency_menu.addAction(opacity_95)
+        
+        opacity_100 = QAction('100% Opacity (No transparency)', self)
+        opacity_100.triggered.connect(lambda: self.set_opacity(1.0))
+        transparency_menu.addAction(opacity_100)
+        
+        view_menu.addSeparator()
+        
         stats_action = QAction('Session Statistics', self)
         stats_action.setShortcut(QKeySequence('Ctrl+I'))
         stats_action.triggered.connect(self.show_session_stats)
@@ -361,6 +420,29 @@ class HackerTerminal(QMainWindow):
     def change_color_scheme(self, scheme):
         self.color_scheme = scheme
         self.apply_color_scheme()
+        self.save_settings()
+    
+    def toggle_transparency(self):
+        """Переключение прозрачности"""
+        self.transparency_enabled = not self.transparency_enabled
+        self.apply_opacity()
+        self.save_settings()
+    
+    def set_opacity(self, opacity):
+        """Установить уровень прозрачности"""
+        self.opacity = opacity
+        if not self.transparency_enabled:
+            self.transparency_enabled = True
+            self.transparency_action.setChecked(True)
+        self.apply_opacity()
+        self.save_settings()
+    
+    def apply_opacity(self):
+        """Применить настройки прозрачности"""
+        if self.transparency_enabled:
+            self.setWindowOpacity(self.opacity)
+        else:
+            self.setWindowOpacity(1.0)
 
     def is_destructive(self, cmd: str) -> bool:
         """Проверка опасных команд"""
@@ -402,6 +484,12 @@ class HackerTerminal(QMainWindow):
                 pass
             return
 
+        # Проверяем запускается ли vim/nano/htop и т.д. ПЕРЕД отправкой команды
+        cmd_lower = text.strip().lower().split()[0] if text.strip() else ""
+        raw_apps = ['vim', 'vi', 'nano', 'htop', 'top', 'less', 'man', 'more']
+        
+        is_raw_app = cmd_lower in raw_apps
+        
         # Добавляем в историю
         if not self.command_history or self.command_history[-1] != text:
             self.command_history.append(text)
@@ -430,16 +518,104 @@ class HackerTerminal(QMainWindow):
                     self.terminal_output.append("\n[EXODUS] Command cancelled by user.\n")
                     return
             
+            # Входим в raw режим ПЕРЕД отправкой команды если это raw app
+            if is_raw_app:
+                # Небольшая задержка чтобы интерфейс успел перестроиться
+                QApplication.processEvents()
+                self.enter_raw_mode()
+            
+            # Отправляем команду
             os.write(self.master_fd, (text + '\n').encode('utf-8'))
+            
         except Exception as e:
             self.terminal_output.append(f"\nERROR: {str(e)}\n")
 
     def on_text_changed(self, text):
         """Подсказки при вводе команд"""
-        # Можно добавить автодополнение или подсказки
         pass
+    
+    def enter_raw_mode(self):
+        """Входим в raw режим для vim/nano"""
+        self.raw_mode = True
+        self.command_input.hide()  # Прячем поле ввода
+        self.terminal_output.setFocus()  # Фокус на терминал
+        
+        # Настройки для raw режима
+        self.terminal_output.setLineWrapMode(QTextEdit.NoWrap)  # Отключаем перенос строк
+        
+        # Инициализируем pyte экран
+        try:
+            fm = self.terminal_output.fontMetrics()
+            cols = max(80, self.terminal_output.viewport().width() // fm.averageCharWidth())
+            rows = max(24, self.terminal_output.viewport().height() // fm.height())
+            
+            self.screen = pyte.Screen(cols, rows)
+            self.stream = pyte.Stream(self.screen)
+            
+            # Очищаем терминал для чистого старта
+            self.terminal_output.clear()
+        except Exception as e:
+            self.terminal_output.append(f"\n[Error initializing RAW mode: {e}]\n")
+    
+    def exit_raw_mode(self):
+        """Выходим из raw режима"""
+        if self.raw_mode:
+            self.raw_mode = False
+            self.screen = None
+            self.stream = None
+            
+            # Возвращаем обычные настройки
+            self.terminal_output.setLineWrapMode(QTextEdit.WidgetWidth)
+            
+            self.command_input.show()  # Показываем поле ввода
+            self.command_input.setFocus()
 
     def eventFilter(self, obj, event):
+        # RAW РЕЖИМ - перехватываем весь ввод с клавиатуры
+        if self.raw_mode and obj == self.terminal_output and event.type() == event.KeyPress:
+            # Ctrl+Q - выход из raw режима вручную
+            if event.key() == Qt.Key_Q and event.modifiers() == Qt.ControlModifier:
+                self.exit_raw_mode()
+                return True
+            
+            # Все остальные клавиши отправляем в терминал
+            key = event.key()
+            modifiers = event.modifiers()
+            text = event.text()
+            
+            # Обрабатываем специальные клавиши
+            if key == Qt.Key_Return or key == Qt.Key_Enter:
+                self.send_input(b'\r')
+            elif key == Qt.Key_Backspace:
+                self.send_input(b'\x7f')
+            elif key == Qt.Key_Tab:
+                self.send_input(b'\t')
+            elif key == Qt.Key_Escape:
+                self.send_input(b'\x1b')
+            elif key == Qt.Key_Up:
+                self.send_input(b'\x1b[A')
+            elif key == Qt.Key_Down:
+                self.send_input(b'\x1b[B')
+            elif key == Qt.Key_Right:
+                self.send_input(b'\x1b[C')
+            elif key == Qt.Key_Left:
+                self.send_input(b'\x1b[D')
+            elif key == Qt.Key_Home:
+                self.send_input(b'\x1b[H')
+            elif key == Qt.Key_End:
+                self.send_input(b'\x1b[F')
+            elif key == Qt.Key_PageUp:
+                self.send_input(b'\x1b[5~')
+            elif key == Qt.Key_PageDown:
+                self.send_input(b'\x1b[6~')
+            elif key == Qt.Key_Delete:
+                self.send_input(b'\x1b[3~')
+            elif text:
+                self.send_input(text.encode('utf-8'))
+            
+            return True
+        
+        # ОБЫЧНЫЙ РЕЖИМ - работа с полем ввода
         if obj == self.command_input and event.type() == event.KeyPress:
             # История команд - стрелка вверх
             if event.key() == Qt.Key_Up:
@@ -526,6 +702,11 @@ class HackerTerminal(QMainWindow):
             rows = max(10, self.terminal_output.viewport().height() // fm.height())
             size = struct.pack('HHHH', rows, cols, 0, 0)
             fcntl.ioctl(self.master_fd, termios.TIOCSWINSZ, size)
+            
+            # Обновляем размер pyte экрана если в raw режиме
+            if self.raw_mode and self.screen:
+                self.screen.resize(rows, cols)
+                self.render_screen()
         except Exception:
             pass
 
@@ -536,10 +717,26 @@ class HackerTerminal(QMainWindow):
     def handle_output(self, data):
         try:
             text = data.decode('utf-8', errors='replace')
-            # Удаляем ANSI escape последовательности
-            text = re.sub(r'\x1b\[[0-9;?]*[A-Za-z]', '', text)
-            text = re.sub(r'\x1b\][0-9;]*[^\x07\x1b]*[\x07\x1b]', '', text)
-            text = re.sub(r'\x1b[^\x1b]*[\x07\x1b\\]', '', text)
+            
+            # RAW режим с pyte - рендерим экран терминала
+            if self.raw_mode and self.stream:
+                try:
+                    # Пропускаем данные через pyte
+                    self.stream.feed(text)
+                    
+                    # Рендерим экран
+                    self.render_screen()
+                    return
+                except Exception as e:
+                    # Если что-то пошло не так, выходим из raw режима
+                    self.exit_raw_mode()
+            
+            # ОБЫЧНЫЙ режим - фильтруем escape-последовательности
+            if not self.raw_mode:
+                # Удаляем ANSI escape последовательности
+                text = re.sub(r'\x1b\[[0-9;?]*[A-Za-z]', '', text)
+                text = re.sub(r'\x1b\][0-9;]*[^\x07\x1b]*[\x07\x1b]', '', text)
+                text = re.sub(r'\x1b[^\x1b]*[\x07\x1b\\]', '', text)
             
             scrollbar = self.terminal_output.verticalScrollBar()
             at_bottom = scrollbar.value() == scrollbar.maximum()
@@ -558,6 +755,30 @@ class HackerTerminal(QMainWindow):
                 cursor.movePosition(QTextCursor.NextBlock, QTextCursor.KeepAnchor, 500)
                 cursor.removeSelectedText()
         except Exception:
+            pass
+    
+    def render_screen(self):
+        """Отрисовка pyte экрана в QTextEdit"""
+        if not self.screen:
+            return
+        
+        try:
+            # Собираем текст со всех строк экрана
+            lines = []
+            for y in range(self.screen.lines):
+                line = ""
+                for x in range(self.screen.columns):
+                    char = self.screen.buffer[y][x]
+                    line += char.data
+                lines.append(line)
+            
+            # Обновляем виджет - ПОЛНОСТЬЮ заменяем текст
+            screen_text = "\n".join(lines)
+            
+            # Используем setPlainText для полной замены
+            self.terminal_output.setPlainText(screen_text)
+            
+        except Exception as e:
             pass
 
     def send_input(self, data):
@@ -631,10 +852,13 @@ class HackerTerminal(QMainWindow):
 <tr><td><b>Ctrl+N</b></td><td>New terminal window</td></tr>
 <tr><td><b>Ctrl+S</b></td><td>Save terminal output</td></tr>
 <tr><td><b>Ctrl+I</b></td><td>Show session statistics</td></tr>
+<tr><td><b>Ctrl+T</b></td><td>Toggle transparency</td></tr>
+<tr><td><b>Ctrl+Q</b></td><td>Exit raw mode (vim/nano)</td></tr>
 <tr><td><b>Ctrl++/-</b></td><td>Zoom in/out</td></tr>
 <tr><td><b>Ctrl+0</b></td><td>Reset zoom</td></tr>
 <tr><td><b>F1</b></td><td>Show this help</td></tr>
 </table>
+<p style='color: #00FF00;'><b>Note:</b> When using vim/nano/htop, the terminal automatically enters RAW mode.</p>
 """
         msg = QMessageBox(self)
         msg.setWindowTitle("Keyboard Shortcuts")
@@ -696,6 +920,33 @@ class HackerTerminal(QMainWindow):
                     f.write(cmd + '\n')
         except Exception:
             pass
+    
+    def load_settings(self):
+        """Загрузить настройки из файла"""
+        settings_file = os.path.expanduser('~/.exodus_settings.json')
+        try:
+            if os.path.exists(settings_file):
+                with open(settings_file, 'r', encoding='utf-8') as f:
+                    settings = json.load(f)
+                    self.opacity = settings.get('opacity', 0.95)
+                    self.transparency_enabled = settings.get('transparency_enabled', False)
+                    self.color_scheme = settings.get('color_scheme', 'green')
+        except Exception:
+            pass
+    
+    def save_settings(self):
+        """Сохранить настройки в файл"""
+        settings_file = os.path.expanduser('~/.exodus_settings.json')
+        try:
+            settings = {
+                'opacity': self.opacity,
+                'transparency_enabled': self.transparency_enabled,
+                'color_scheme': self.color_scheme
+            }
+            with open(settings_file, 'w', encoding='utf-8') as f:
+                json.dump(settings, f, indent=2)
+        except Exception:
+            pass
 
     def zoom_in(self):
         f = self.terminal_output.font()
@@ -733,6 +984,7 @@ Advanced terminal emulator with PTY support and enhanced features.
 <li>Destructive command protection</li>
 <li>Session statistics and logging</li>
 <li>Multiple color schemes</li>
+<li>Window transparency</li>
 <li>Auto-completion support</li>
 <li>Signal handling (Ctrl+C, Ctrl+Z, etc.)</li>
 </ul>
@@ -768,8 +1020,9 @@ Press F1 for keyboard shortcuts
         msg.exec_()
 
     def closeEvent(self, event):
-        # Сохраняем историю перед выходом
+        # Сохраняем историю и настройки перед выходом
         self.save_history()
+        self.save_settings()
         
         # Останавливаем таймер
         self.autosave_timer.stop()
