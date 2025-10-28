@@ -1,40 +1,38 @@
 #!/bin/bash
+
 export PATH="$HOME/.local/bin:$PATH"
 
-APP_NAME="exodus"
-ICON_NAME="icon.png"
-PY_FILE="exodus.py"
-REPO_DIR="$(pwd)/EXODUS"  # Путь к папке с .py и иконкой
-BUILD_DIR="dist"
-BIN_DIR="$HOME/.local/bin"
-ICON_DIR="$HOME/.local/share/icons"
+REPO_DIR="$HOME/EXODUS-Terminal/EXODUS"  # путь к папке с exodus.py
+APP_NAME="Exodus"
+PY_FILE="$REPO_DIR/exodus.py"
+ICON_NAME="$REPO_DIR/icon.png"
+BUILD_DIR="$REPO_DIR/dist"
 DESKTOP_FILE="$HOME/.local/share/applications/$APP_NAME.desktop"
+BIN_DIR="$HOME/.local/bin"
 
-echo "=== Installing $APP_NAME ==="
+echo "=== Building $APP_NAME ==="
 
 # Проверка PyInstaller
-if ! command -v pyinstaller &> /dev/null; then
+if ! command -v pyinstaller &> /dev/null
+then
     echo "PyInstaller не найден, ставим..."
     pip install --user pyinstaller
 fi
 
-# Сборка с PyInstaller с иконкой и правильным именем
-pyinstaller --noconfirm --onefile --windowed --icon="$REPO_DIR/$ICON_NAME" --name "$APP_NAME" "$REPO_DIR/$PY_FILE"
+# Сборка с PyInstaller с иконкой
+pyinstaller --noconfirm --onefile --windowed --icon="$ICON_NAME" --name "$APP_NAME" "$PY_FILE"
 
-# Проверяем, что бинарник реально создан
-if [ ! -f "$BUILD_DIR/$APP_NAME" ]; then
-    echo "Ошибка: бинарник $BUILD_DIR/$APP_NAME не найден!"
-    exit 1
-fi
-
-# Создаём папку для бинарника и копируем
+# Создаём папку для бинарника, если нет
 mkdir -p "$BIN_DIR"
+
+# Копируем бинарник
 cp "$BUILD_DIR/$APP_NAME" "$BIN_DIR/$APP_NAME"
 chmod +x "$BIN_DIR/$APP_NAME"
 
-# Копируем иконку
+# Копируем иконку в ~/.local/share/icons
+ICON_DIR="$HOME/.local/share/icons"
 mkdir -p "$ICON_DIR"
-cp "$REPO_DIR/$ICON_NAME" "$ICON_DIR/$ICON_NAME"
+cp "$ICON_NAME" "$ICON_DIR/$APP_NAME.png"
 
 # Создаём .desktop файл
 mkdir -p "$(dirname "$DESKTOP_FILE")"
@@ -43,7 +41,7 @@ cat > "$DESKTOP_FILE" <<EOL
 Name=$APP_NAME
 Comment=Hacker Terminal
 Exec=$BIN_DIR/$APP_NAME
-Icon=$ICON_DIR/$ICON_NAME
+Icon=$ICON_DIR/$APP_NAME.png
 Terminal=false
 Type=Application
 Categories=Utility;
@@ -51,10 +49,5 @@ EOL
 
 chmod +x "$DESKTOP_FILE"
 
-# Обновляем базу меню (чтобы .desktop появился сразу)
-if command -v update-desktop-database &> /dev/null; then
-    update-desktop-database "$HOME/.local/share/applications" &> /dev/null
-fi
-
 echo "=== Installation complete! ==="
-echo "You can now launch $APP_NAME from your applications menu or by typing '$APP_NAME' in terminal."
+echo "You can now launch $APP_NAME from your applications menu."
