@@ -13,7 +13,7 @@ Advanced PTY terminal emulator with enhanced features, built with PyQt5.
 - Multiple color schemes (Matrix green, Amber, Blue, Red)
 - Auto-completion support
 - Signal handling (Ctrl+C, Ctrl+Z, etc.)
-- Easy installation with one command
+- Easy installation
 
 ## Requirements
 
