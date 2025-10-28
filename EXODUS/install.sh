@@ -41,7 +41,7 @@ cat > "$DESKTOP_FILE" <<EOL
 Name=$APP_NAME
 Comment=Hacker Terminal
 Exec=$BIN_DIR/$APP_NAME
-Icon=$ICON_DIR/$APP_NAME.png
+Icon=~/EXODUS-Terminal/exodus.png
 Terminal=false
 Type=Application
 Categories=Utility;
