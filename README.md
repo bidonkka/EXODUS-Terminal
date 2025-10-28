@@ -32,6 +32,6 @@ git clone https://github.com/bidonkka/EXODUS-Terminal.git
 cd EXODUS-Terminal
 cd EXODUS
 chmod +x install.sh
-sudo ./install.sh
+ ./install.sh
 ```
 
