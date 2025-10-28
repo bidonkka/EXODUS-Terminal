@@ -6,7 +6,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg"></a>
 </p>
 
-<p align="center">Advanced PTY terminal emulator with enhanced features, built with PyQt5.</p>
+<p align="center"><h2> Advanced PTY terminal emulator with enhanced features, built with PyQt5. </h2></p>
 
 ![EXODUS Logo](./resources/icon.png)
  ## ✨ Features
@@ -19,6 +19,7 @@
 | Signal handling | Ctrl+C, Ctrl+Z, etc. |
 | Logging | Session statistics & logs |
 
+## 🧰 Requirements
    | Requirements |
   |---------------------------------|
  | Python 3.11+                    |
